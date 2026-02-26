@@ -7,7 +7,8 @@ import {
   FiMic, FiMicOff, FiVideo, FiVideoOff, 
   FiPhone, FiMessageSquare, FiUsers,
   FiSettings, FiShare2, FiSmile, FiMonitor,
-  FiCopy, FiMail, FiMessageCircle
+  FiCopy, FiMail, FiMessageCircle,
+  FiCamera, FiVolume2, FiWifi, FiSun
 } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 
@@ -17,28 +18,27 @@ const MeetingControls = ({ meetingId, isHost, localStream, meetingCode }) => {
   const [showSettings, setShowSettings] = useState(false);
   const [showReactions, setShowReactions] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
+  const [floatingReactions, setFloatingReactions] = useState([]);
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const socket = getSocket();
 
-  // Camera control like Google Meet
+  // Camera control with proper LED off
   const toggleVideo = async () => {
     if (localStream) {
       const videoTracks = localStream.getVideoTracks();
       
       if (videoEnabled) {
-        // Turn off camera - freeze frame like Google Meet
         videoTracks.forEach(track => {
           track.enabled = false;
+          track.stop();
+          localStream.removeTrack(track);
         });
         
-        // Optional: Show a placeholder/avatar instead of black screen
         setVideoEnabled(false);
         toast.success('Camera turned off', { icon: '📹', duration: 1500 });
       } else {
-        // Turn on camera
         try {
-          // Get fresh camera stream
           const newStream = await navigator.mediaDevices.getUserMedia({ 
             video: { 
               width: { ideal: 1280 },
@@ -48,15 +48,8 @@ const MeetingControls = ({ meetingId, isHost, localStream, meetingCode }) => {
           });
           
           const newVideoTrack = newStream.getVideoTracks()[0];
-          
-          // Replace old track with new one
-          const oldTrack = videoTracks[0];
-          if (oldTrack) {
-            localStream.removeTrack(oldTrack);
-            oldTrack.stop();
-          }
-          
           localStream.addTrack(newVideoTrack);
+          
           setVideoEnabled(true);
           toast.success('Camera turned on', { icon: '📹', duration: 1500 });
         } catch (error) {
@@ -81,7 +74,7 @@ const MeetingControls = ({ meetingId, isHost, localStream, meetingCode }) => {
     }
   };
 
-  // Enhanced screen share
+  // Screen share - works for any number of participants
   const handleShareScreen = async () => {
     try {
       const screenStream = await navigator.mediaDevices.getDisplayMedia({ 
@@ -101,7 +94,6 @@ const MeetingControls = ({ meetingId, isHost, localStream, meetingCode }) => {
       toast.success('Sharing screen', { icon: '🖥️', duration: 2000 });
       
       screenTrack.onended = () => {
-        // Return to camera when screen share ends
         navigator.mediaDevices.getUserMedia({ video: true })
           .then(cameraStream => {
             const newTrack = cameraStream.getVideoTracks()[0];
@@ -115,16 +107,78 @@ const MeetingControls = ({ meetingId, isHost, localStream, meetingCode }) => {
     }
   };
 
-  // Enhanced invitation with multiple options
-  const handleInvite = () => {
-    const inviteLink = `${window.location.origin}/join/${meetingCode}`;
-    const meetingInfo = {
-      code: meetingCode,
-      link: inviteLink,
-      message: `Join my meeting: ${inviteLink}\nMeeting code: ${meetingCode}`
+  // Google Meet-like animated reactions - ONE reaction per click
+  const handleReaction = (reaction) => {
+    // Emit to socket
+    socket.emit('send-reaction', { meetingId, reaction });
+    
+    // Create ONE floating reaction per click
+    const id = Date.now();
+    const angle = (Math.random() * 50) - 25; // -25 to 25 degrees
+    const left = 45 + (Math.random() * 20 - 10); // Center-ish with variation
+    const duration = 3;
+    
+    const newReaction = {
+      id,
+      reaction,
+      left: `${left}%`,
+      angle,
+      duration,
+      animation: `floatDiagonal ${duration}s ease-out forwards`
     };
     
-    // Show invite modal/dropdown instead of alert
+    setFloatingReactions(prev => [...prev, newReaction]);
+    
+    // Remove after animation
+    setTimeout(() => {
+      setFloatingReactions(prev => prev.filter(r => r.id !== id));
+    }, duration * 1000);
+    
+    // Don't close the menu
+  };
+
+  // Listen for reactions from others
+  React.useEffect(() => {
+    if (socket) {
+      socket.on('new-reaction', ({ username, reaction }) => {
+        // Show ONE floating reaction for others
+        const id = Date.now();
+        const angle = (Math.random() * 50) - 25;
+        const left = 45 + (Math.random() * 20 - 10);
+        const duration = 3;
+        
+        const newReaction = {
+          id,
+          reaction,
+          left: `${left}%`,
+          angle,
+          duration,
+          animation: `floatDiagonal ${duration}s ease-out forwards`,
+          username
+        };
+        
+        setFloatingReactions(prev => [...prev, newReaction]);
+        
+        setTimeout(() => {
+          setFloatingReactions(prev => prev.filter(r => r.id !== id));
+        }, duration * 1000);
+      });
+    }
+    
+    return () => {
+      if (socket) {
+        socket.off('new-reaction');
+      }
+    };
+  }, [socket]);
+
+  // Toggle settings menu - only closes when clicking the settings button again
+  const toggleSettings = () => {
+    setShowSettings(!showSettings);
+  };
+
+  // Invite functions
+  const handleInvite = () => {
     setShowInvite(!showInvite);
   };
 
@@ -150,17 +204,6 @@ const MeetingControls = ({ meetingId, isHost, localStream, meetingCode }) => {
     setShowInvite(false);
   };
 
-  // Reactions
-  const handleReaction = (reaction) => {
-    socket.emit('send-reaction', { meetingId, reaction });
-    toast(reaction, { 
-      duration: 1000,
-      position: 'top-center',
-      style: { fontSize: '2rem', background: 'transparent' }
-    });
-    setShowReactions(false);
-  };
-
   const handleLeaveMeeting = () => {
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
@@ -183,6 +226,50 @@ const MeetingControls = ({ meetingId, isHost, localStream, meetingCode }) => {
 
   return (
     <div className="bg-base-100 border-t border-base-200 p-4 relative">
+      {/* Floating Reactions Container */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden">
+        {floatingReactions.map((item) => (
+          <div
+            key={item.id}
+            className="absolute text-4xl z-50"
+            style={{
+              left: item.left,
+              bottom: '15%',
+              animation: item.animation,
+              filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.1))',
+              transformOrigin: 'center'
+            }}
+          >
+            {item.reaction}
+          </div>
+        ))}
+      </div>
+
+      <style>{`
+        @keyframes floatDiagonal {
+          0% {
+            transform: translate(0, 0) rotate(0deg) scale(1);
+            opacity: 1;
+          }
+          25% {
+            transform: translate(30px, -80px) rotate(10deg) scale(1.2);
+            opacity: 0.9;
+          }
+          50% {
+            transform: translate(10px, -160px) rotate(0deg) scale(1.1);
+            opacity: 0.7;
+          }
+          75% {
+            transform: translate(-20px, -240px) rotate(-10deg) scale(0.9);
+            opacity: 0.4;
+          }
+          100% {
+            transform: translate(0, -320px) rotate(0deg) scale(0.5);
+            opacity: 0;
+          }
+        }
+      `}</style>
+
       <div className="flex justify-center items-center gap-2 flex-wrap">
         {/* Audio Control */}
         <button
@@ -202,7 +289,7 @@ const MeetingControls = ({ meetingId, isHost, localStream, meetingCode }) => {
           {videoEnabled ? <FiVideo className="text-xl" /> : <FiVideoOff className="text-xl" />}
         </button>
 
-        {/* Share Screen */}
+        {/* Share Screen - Works for any number of participants */}
         <button
           onClick={handleShareScreen}
           className="btn btn-circle btn-ghost"
@@ -260,8 +347,8 @@ const MeetingControls = ({ meetingId, isHost, localStream, meetingCode }) => {
           )}
         </div>
 
-        {/* Reactions */}
-        <div className="dropdown dropdown-top">
+        {/* Reactions Button */}
+        <div className="relative">
           <button
             onClick={() => setShowReactions(!showReactions)}
             className="btn btn-circle btn-ghost"
@@ -269,34 +356,143 @@ const MeetingControls = ({ meetingId, isHost, localStream, meetingCode }) => {
           >
             <FiSmile className="text-xl" />
           </button>
+          
+          {/* Reactions Menu - Stays open for multiple clicks */}
           {showReactions && (
-            <ul className="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 mb-2 grid grid-cols-3 gap-1">
-              <li><button onClick={() => handleReaction('👍')} className="text-2xl hover:scale-125 transition">👍</button></li>
-              <li><button onClick={() => handleReaction('👎')} className="text-2xl hover:scale-125 transition">👎</button></li>
-              <li><button onClick={() => handleReaction('❤️')} className="text-2xl hover:scale-125 transition">❤️</button></li>
-              <li><button onClick={() => handleReaction('😂')} className="text-2xl hover:scale-125 transition">😂</button></li>
-              <li><button onClick={() => handleReaction('😮')} className="text-2xl hover:scale-125 transition">😮</button></li>
-              <li><button onClick={() => handleReaction('🎉')} className="text-2xl hover:scale-125 transition">🎉</button></li>
-            </ul>
+            <div className="absolute bottom-16 left-1/2 transform -translate-x-1/2 bg-base-100 rounded-full shadow-2xl p-2 border border-base-300 flex gap-1 z-50">
+              <button 
+                onClick={() => handleReaction('👍')} 
+                className="btn btn-circle btn-ghost hover:bg-primary/20 text-2xl hover:scale-125 transition-all"
+                title="Like"
+              >
+                👍
+              </button>
+              <button 
+                onClick={() => handleReaction('❤️')} 
+                className="btn btn-circle btn-ghost hover:bg-primary/20 text-2xl hover:scale-125 transition-all"
+                title="Love"
+              >
+                ❤️
+              </button>
+              <button 
+                onClick={() => handleReaction('😂')} 
+                className="btn btn-circle btn-ghost hover:bg-primary/20 text-2xl hover:scale-125 transition-all"
+                title="Laugh"
+              >
+                😂
+              </button>
+              <button 
+                onClick={() => handleReaction('😮')} 
+                className="btn btn-circle btn-ghost hover:bg-primary/20 text-2xl hover:scale-125 transition-all"
+                title="Wow"
+              >
+                😮
+              </button>
+              <button 
+                onClick={() => handleReaction('😢')} 
+                className="btn btn-circle btn-ghost hover:bg-primary/20 text-2xl hover:scale-125 transition-all"
+                title="Sad"
+              >
+                😢
+              </button>
+              <button 
+                onClick={() => handleReaction('🎉')} 
+                className="btn btn-circle btn-ghost hover:bg-primary/20 text-2xl hover:scale-125 transition-all"
+                title="Celebrate"
+              >
+                🎉
+              </button>
+              <button 
+                onClick={() => handleReaction('👏')} 
+                className="btn btn-circle btn-ghost hover:bg-primary/20 text-2xl hover:scale-125 transition-all"
+                title="Applause"
+              >
+                👏
+              </button>
+            </div>
           )}
         </div>
 
-        {/* Settings */}
-        <div className="dropdown dropdown-top">
+        {/* Settings - Only toggles when clicking the settings button */}
+        <div className="relative">
           <button
-            onClick={() => setShowSettings(!showSettings)}
+            onClick={toggleSettings}
             className="btn btn-circle btn-ghost"
             title="Settings"
           >
             <FiSettings className="text-xl" />
           </button>
+          
           {showSettings && (
-            <ul className="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-56 mb-2">
-              <li><a><input type="checkbox" className="toggle toggle-sm mr-2" /> HD Video</a></li>
-              <li><a><input type="checkbox" className="toggle toggle-sm mr-2" /> Noise suppression</a></li>
-              <li><a><input type="checkbox" className="toggle toggle-sm mr-2" /> Echo cancellation</a></li>
-              <li><a><input type="range" min="0" max="100" className="range range-xs" /> Mic volume</a></li>
-            </ul>
+            <div className="absolute bottom-16 left-1/2 transform -translate-x-1/2 bg-base-100 rounded-lg shadow-2xl p-4 border border-base-300 w-64 z-50">
+              <h3 className="font-bold mb-3">Settings</h3>
+              
+              <div className="space-y-4">
+                {/* Camera Settings */}
+                <div>
+                  <label className="flex items-center gap-2 text-sm mb-1">
+                    <FiCamera /> Camera
+                  </label>
+                  <select className="select select-bordered select-sm w-full">
+                    <option>Default Camera</option>
+                    <option>HD Camera</option>
+                    <option>External Camera</option>
+                  </select>
+                </div>
+                
+                {/* Microphone Settings */}
+                <div>
+                  <label className="flex items-center gap-2 text-sm mb-1">
+                    <FiVolume2 /> Microphone
+                  </label>
+                  <select className="select select-bordered select-sm w-full">
+                    <option>Default Microphone</option>
+                    <option>External Microphone</option>
+                  </select>
+                </div>
+                
+                {/* Speaker Settings */}
+                <div>
+                  <label className="flex items-center gap-2 text-sm mb-1">
+                    <FiWifi /> Speaker
+                  </label>
+                  <select className="select select-bordered select-sm w-full">
+                    <option>Default Speaker</option>
+                    <option>Headphones</option>
+                  </select>
+                </div>
+                
+                {/* Video Quality */}
+                <div>
+                  <label className="flex items-center gap-2 text-sm mb-1">
+                    <FiSun /> Video Quality
+                  </label>
+                  <div className="flex gap-1">
+                    <button className="btn btn-xs btn-outline btn-primary">Auto</button>
+                    <button className="btn btn-xs btn-outline">HD</button>
+                    <button className="btn btn-xs btn-outline">SD</button>
+                  </div>
+                </div>
+                
+                {/* Background Blur */}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Background Blur</span>
+                  <input type="checkbox" className="toggle toggle-sm" />
+                </div>
+                
+                {/* Noise Suppression */}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Noise Suppression</span>
+                  <input type="checkbox" className="toggle toggle-sm" defaultChecked />
+                </div>
+                
+                {/* Echo Cancellation */}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Echo Cancellation</span>
+                  <input type="checkbox" className="toggle toggle-sm" defaultChecked />
+                </div>
+              </div>
+            </div>
           )}
         </div>
 

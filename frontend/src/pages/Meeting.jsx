@@ -159,11 +159,12 @@ const Meeting = () => {
       </div>
 
       {/* Meeting Controls */}
-      <MeetingControls 
-        meetingId={meetingId}
-        isHost={currentMeeting?.host_id === user?.id}
-        localStream={localStream}
-      />
+     <MeetingControls 
+  meetingId={meetingId}
+  isHost={currentMeeting?.host_id === user?.id}
+  localStream={localStream}
+  meetingCode={currentMeeting?.meeting_code}  // Add this line
+/>
     </div>
   );
 };

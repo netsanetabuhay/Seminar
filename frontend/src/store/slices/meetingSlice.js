@@ -1,3 +1,4 @@
+// src/store/slices/meetingSlice.js
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
 
@@ -45,6 +46,41 @@ export const getMeetingDetails = createAsyncThunk(
       const response = await axios.get(`${API_URL}/meetings/${meetingId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data || error.message);
+    }
+  }
+);
+
+// 🔴 ADD THESE MISSING EXPORTS
+export const endMeeting = createAsyncThunk(
+  'meeting/end',
+  async (meetingId, { rejectWithValue }) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.put(
+        `${API_URL}/meetings/${meetingId}/end`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data || error.message);
+    }
+  }
+);
+
+export const leaveMeeting = createAsyncThunk(
+  'meeting/leave',
+  async (meetingId, { rejectWithValue }) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.post(
+        `${API_URL}/meetings/${meetingId}/leave`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
       return response.data;
     } catch (error) {
       return rejectWithValue(error.response?.data || error.message);
@@ -110,6 +146,17 @@ const meetingSlice = createSlice({
         state.currentMeeting = action.payload.meeting;
         state.participants = action.payload.participants || [];
         state.chats = action.payload.chats || [];
+      })
+      // 🔴 ADD THESE EXTRA REDUCERS
+      .addCase(endMeeting.fulfilled, (state) => {
+        state.currentMeeting = null;
+        state.participants = [];
+        state.chats = [];
+      })
+      .addCase(leaveMeeting.fulfilled, (state) => {
+        state.currentMeeting = null;
+        state.participants = [];
+        state.chats = [];
       });
   },
 });
